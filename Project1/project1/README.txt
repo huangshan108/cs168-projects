@@ -1,0 +1,4 @@
+1. Shan Huang cs168-fa; Zach Green cs168-dq
+2. We had trouble ensuring that the cost tables of each router stayed consistent with each other.  We also difficulty accounting for weights in the links.
+3. We could program the routers to take into consideration bandwidth and network delay to better determine the optimal path.  
+4. Our code can handle both link weights and incremental updates.  For link weights there needs to be some delay in between updates as some updates may take longer to arrive at each router than others (due to differing latencies).
