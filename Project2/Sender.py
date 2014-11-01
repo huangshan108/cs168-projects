@@ -12,7 +12,7 @@ class Sender(BasicSender.BasicSender):
         super(Sender, self).__init__(dest, port, filename, debug)
         self.sock.settimeout(0.5)
         self.dataSize = 1400
-        self.seqNum = 0
+        self.seqNum = -1
         self.windowSize = 5
         self.sentPackets = {}
         self.maxSize = 1472
@@ -27,46 +27,49 @@ class Sender(BasicSender.BasicSender):
     def start(self):
         # sync with the receiver with "greeting message"
         firstPacket = self.make_packet("start", self.seqNum, "")
-        self.send(firstPacket, (self.dest, self.dport))
+        self.send(firstPacket)
         self.sentPackets[self.seqNum] = firstPacket
         message = self.receive(self.timeout)
         # no response from receiver when trying to establish the connection
         if message == None:
+            print("yes")
             self.handle_start_timeout()
+        print(self.seqNum)
+        self.seqNum += 1
         # got response from the receiver and the connection has been established,
         # start to send the data packet
-        self.do_send(self.seqNum, self.seqNum + self.dataSize * self.windowSize)
+        self.do_send(self.seqNum, self.seqNum + self.windowSize)
         while True:
             message = self.receive(self.timeout)              
             if message == None:
-                if self.finalAckNum != None and self.seqNum > self.finalAckNum:
+                if self.finalAckNum != None and self.seqNum == self.finalAckNum:
                     break
-                self.do_send(self.seqNum, self.seqNum + self.dataSize * self.windowSize)
+                self.do_send(self.seqNum, self.seqNum + self.windowSize)
                 continue
             returnedMessage = self.handle_new_ack(message)
             if returnedMessage == "Checksum":
                 continue
             if returnedMessage == "Duplicate":
                 if self.duplicates == 3:
-                    self.send(self.sentPackets[self.seqNum], dest)
+                    self.send(self.sentPackets[self.seqNum])
                     self.duplicates = 0
                 continue
             if returnedMessage == "OldAck":
                 continue
             if returnedMessage == "Forward":
-                numPacketsToSend = (ackSeqNum - self.seqNum)/self.dataSize
-                self.do_send(self.seqNum + self.dataSize * (self.windowSize - numPacketsToSend), self.seqNum + self.windowSize * self.dataSize)
+                numPacketsToSend = ackSeqNum - self.seqNum
+                self.do_send(self.seqNum + self.windowSize - numPacketsToSend, self.seqNum + self.windowSize)
                 continue
             if returnedMessage == "Unknown":
                 print "Unknown Error"
                 exit(1)
         
-        endPacket = self.make_packet("end", self.seqNum, "1")
-        self.send(endPacket, self.dest)
+        endPacket = self.make_packet("end", self.seqNum, "")
+        self.send(endPacket)
         while True:
             message = self.receive(self.timeout)
             if message == None:
-                self.send(endPacket, self.dest)
+                self.send(endPacket)
                 continue
             packetSeqNum = self.get_packet_seq_num(message)
             if packetSeqNum == self.seqNum + 1:
@@ -76,14 +79,13 @@ class Sender(BasicSender.BasicSender):
         
         
     def do_send(self, starting_seq, end_seq):
-        self.infile.seek(starting_seq)
-        for num in range(starting_seq/self.dataSize, end_seq/self.dataSize):
-            seqNum = self.dataSize * num
+        self.infile.seek(starting_seq*self.dataSize)
+        for seqNum in range(starting_seq, end_seq):
             # we send 1400 bytes at a time/
             data = self.infile.read(self.dataSize)
             # if we finish sending the file
             if data == "":
-                self.finalAckNum = (num - 1) * self.dataSize
+                self.finalAckNum = seqNum
                 return
             if seqNum not in self.sentPackets:
                 packet = self.make_packet("data", seqNum, data)
@@ -98,9 +100,8 @@ class Sender(BasicSender.BasicSender):
             self.send(self.sentPackets[self.seqNum])
             message = self.receive(self.timeout)
             # if we finally have a response, we can start to send the new ack
-            if message != None:
-                break        
-        self.handle_new_ack(message)
+            if message != None and self.get_packet_seq_num(message) == self.seqNum + 1:
+                return        
 
     def handle_new_ack(self, ack):
         ackType = self.get_ack_type(ack)
@@ -113,10 +114,9 @@ class Sender(BasicSender.BasicSender):
             exit(1)
             
     def do_ack_case(self, ack):
-        ackChecksum = self.get_ack_checksum(ack)
         # if the ack does not have a correct checksum, drop the packet
         # most likely we need to wait for the timeout to resend the packet again
-        if ackChecksum != Checksum.generate_checksum(ack):
+        if Checksum.validate_checksum(ack) == False:
             return "Checksum"
         ackSeqNum = self.get_packet_seq_num(ack)
         # if the packets come out of order, drop ignore the acks before the window size
@@ -135,7 +135,7 @@ class Sender(BasicSender.BasicSender):
             
     def do_sack_case(self, ack):
         pass
-
+        
     def handle_dup_ack(self, ack):
         self.duplicates += 1
 
@@ -147,10 +147,10 @@ class Sender(BasicSender.BasicSender):
         return message[:message.find("|")]
     
     def get_packet_seq_num(self, message):
-        return message[message.find("|") + 1, message.rfind("|")]
+        return int(message[message.find("|") + 1: message.rfind("|")])
     
     def get_ack_checksum(self, message):
-        return message[message.rfind("|") + 1:]
+        return int(message[message.rfind("|") + 1:])
 
 
 '''
