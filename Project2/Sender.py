@@ -11,7 +11,7 @@ class Sender(BasicSender.BasicSender):
     def __init__(self, dest, port, filename, debug=False, sackMode=False):
         super(Sender, self).__init__(dest, port, filename, debug)
         self.sock.settimeout(0.5)
-        self.dataSize = self.dataSize
+        self.dataSize = 1400
         self.seqNum = 0
         self.windowSize = 5
         self.sentPackets = {}
@@ -30,22 +30,24 @@ class Sender(BasicSender.BasicSender):
         message = self.receive(self.timeout)
         # no response from receiver when trying to establish the connection
         if message == None:
-            self.handle_first_packet_timeout()
+            self.handle_start_timeout()
         # got response from the receiver and the connection has been established,
         # start to send the data packet
         else:
-            self.send_window()
-        # TODO while loop to send the data
-            
-
-                               
-    def handle_first_packet_timeout(self):
-        while True:
-            self.send(self.sentPackets[self.seqNum])
-            message = self.receive(self.timeout)
-            if message != None:
-                self.do_send(self.seqNum, self.seqNum + self.windowSize * self.dataSize)
-                return
+            duplicates = False
+            while True:
+                if duplicates:
+                    self.send(self.sentPackets[self.seqNum], dest)
+                else:
+                    self.do_send(self.seqNum, self.seqNum + self.dataSize * self.windowSize)
+                message = self.receive(self.timeout)              
+                if message == None:
+                    continue
+                self.handle_new_ack(message)
+                if self.duplicates == 3:
+                    duplicates = True
+                    continue
+                    
         
     def do_send(self, starting_seq, end_seq):
         self.seek(starting_seq)
@@ -54,19 +56,25 @@ class Sender(BasicSender.BasicSender):
             # we send 1400 bytes at a time/
             data = self.infile.read(self.dataSize)
             # if we finish sending the file
-            if data == "":
+            if data != "":
                 return
-            packet = self.make_packet("data", num, data)
-            self.sentPackets[seqNum] = packet
-                
+            if seqNum not in self.sentPackets:
+                packet = self.make_packet("data", seqNum, data)
+                self.sentPackets[seqNum] = packet
+                self.send(packet, dest)
+            else:
+                self.send(self.sentPackets[seqNum], dest)
     
-    def handle_timeout(self):
-        if self.seqNum == 0:
-            while True:
-                self.send(self.sentPackets[self.seqNum])
-                message = self.receive(self.timeout)
-                if message != None:
-                    self.handle_new_ack(
+    # first greeting packet timeout
+    def handle_start_timeout(self):
+        while True:
+            self.send(self.sentPackets[self.seqNum])
+            message = self.receive(self.timeout)
+            # if we finally have a response, we can start to send the new ack
+            if message != None:
+                self.handle_new_ack(message)
+                return
+           
 
     def handle_new_ack(self, ack):
         ackType = self.get_ack_type(ack)
@@ -90,27 +98,17 @@ class Sender(BasicSender.BasicSender):
             return
         # if we got a duplicate ack with seqNum the same as the current seqNum (where the window starts)
         if ackSeqNum == self.seqNum:
-            self.duplicates += 1
-            if self.duplicates == 3:
-                self.handle_dup_ack(ack)
+            self.handle_dup_ack(ack)
         # since it's cumulative acks, we ignore everything as long as we get a ack with higher seqNum
         if ackSeqNum > self.seqNum:
             self.duplicates = 0
-            numPacketsToSend = ackSeqNum - self.seqNum
+            numPacketsToSend = (ackSeqNum - self.seqNum)/self.dataSize
             self.seqNum = ackSeqNum
-            self.do_send(self.seqNum + self.windowSize * self.dataSize - newPacketNum, self.seqNum + self.windowSize * self.dataSize)
+            self.do_send(self.seqNum + self.dataSize * (self.windowSize - numPacketsToSend), self.seqNum + self.windowSize * self.dataSize)
             
-            
-    
-               
-            
-        
-       
-            
-    
 
     def handle_dup_ack(self, ack):
-        pass
+        self.duplicates += 1
 
     def log(self, msg):
         if self.debug:
@@ -124,72 +122,6 @@ class Sender(BasicSender.BasicSender):
     
     def get_ack_checksum(message):
         return message[message.rfind("|") + 1:]
-
-
-'''
-This will be run if you run this script from the command line. You should not
-change any of this; the grader may rely on the behavior here to test your
-submission.
-'''
-if __name__ == "__main__":
-    def usage():
-        print "BEARS-TP Sender"
-        print "-f FILE | --file=FILE The file to transfer; if empty reads from STDIN"
-        print "-p PORT | --port=PORT The destination port, defaults to 33122"
-        print "-a ADDRESS | --address=ADDRESS The receiver address or hostname, defaults to localhost"
-        print "-d | --debug Print debug messages"
-        print "-h | --help Print this usage message"
-        print "-k | --sack Enable selective acknowledgement mode"
-
-    try:
-        opts, args = getopt.getopt(sys.argv[1:],
-                               "f:p:a:dk", ["file=", "port=", "address=", "debug=", "sack="])
-    except:
-        usage()
-        exit()
-
-    port = 33122
-    dest = "localhost"
-    filename = None
-    debug = False
-    sackMode = False
-
-    for o,a in opts:
-        if o in ("-f", "--file="):
-            filename = a
-        elif o in ("-p", "--port="):
-            port = int(a)
-        elif o in ("-a", "--address="):
-            dest = a
-        elif o in ("-d", "--debug="):
-            debug = True
-        elif o in ("-k", "--sack="):
-            sackMode = True
-
-    s = Sender(dest, port, filename, debug, sackMode)
-    try:
-        s.start()
-    except (KeyboardInterrupt, SystemExit):
-        exit()self.sock.settimeout(None)
-        if sackMode:
-            raise NotImplementedError #remove this line when you implement SACK
-
-    # Main sending loop.
-    def start(self):
-        raise NotImplementedError
-
-    def handle_timeout(self):
-        pass
-
-    def handle_new_ack(self, ack):
-        pass
-
-    def handle_dup_ack(self, ack):
-        pass
-
-    def log(self, msg):
-        if self.debug:
-            print msg
 
 
 '''
