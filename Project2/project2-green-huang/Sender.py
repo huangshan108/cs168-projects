@@ -12,7 +12,7 @@ class Sender(BasicSender.BasicSender):
     def __init__(self, dest, port, filename, debug=False, sackMode=False):
         super(Sender, self).__init__(dest, port, filename, debug)
         self.sock.settimeout(0.5)
-        self.dataSize = 1
+        self.dataSize = 1400
         self.seqNum = -1
         self.windowSize = 5
         self.sentPackets = {}
