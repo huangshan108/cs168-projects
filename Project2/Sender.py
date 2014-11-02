@@ -1,5 +1,6 @@
 import sys
 import getopt
+import re
 
 import Checksum
 import BasicSender
@@ -20,8 +21,8 @@ class Sender(BasicSender.BasicSender):
         self.duplicates = 0
         self.finalAckNum = None
         self.timeout = 0.5
-        if sackMode:
-            raise NotImplementedError #remove this line when you implement SACK
+        self.sackMode = sackMode
+        self.sacks = set()
 
     # Main sending loop.
     def start(self):
@@ -48,10 +49,17 @@ class Sender(BasicSender.BasicSender):
                 print("Timeout")
                 if self.finalAckNum != None and self.seqNum == self.finalAckNum:
                     break
-                self.do_send(self.seqNum, self.seqNum + self.windowSize)
+                if self.sackMode:
+                    self.do_send(self.seqNum, self.seqNum + self.windowSize, self.sacks)
+                else:
+                    self.do_send(self.seqNum, self.seqNum + self.windowSize)
                 self.duplicates = 0
                 continue
             print("Sender.py: Received " + message)
+            if self.sackMode:
+                nums = self.get_sack_nums(message)
+                for num in nums:
+                    self.sacks.add(num)
             returnedMessage = self.handle_new_ack(message)
             if returnedMessage == "Checksum":
                 continue
@@ -70,7 +78,6 @@ class Sender(BasicSender.BasicSender):
                 ackSeqNum = self.get_packet_seq_num(message)
                 numPacketsToSend = ackSeqNum - self.seqNum
                 self.seqNum = ackSeqNum
-                print(self.finalAckNum)
                 if self.seqNum == self.finalAckNum:
                     break
                 self.do_send(self.seqNum + self.windowSize - numPacketsToSend, self.seqNum + self.windowSize)
@@ -85,6 +92,7 @@ class Sender(BasicSender.BasicSender):
         while True:
             message = self.receive(self.timeout)
             if message == None:
+                print("Timeout")
                 self.send(endPacket)
                 print("Sender.py: Sending end|" + str(self.seqNum))
                 continue
@@ -97,11 +105,13 @@ class Sender(BasicSender.BasicSender):
             
         
         
-    def do_send(self, starting_seq, end_seq):
+    def do_send(self, starting_seq, end_seq, exclusion=[]):
         self.infile.seek(starting_seq*self.dataSize)
         for seqNum in range(starting_seq, end_seq):
-            # we send 1400 bytes at a time/
             data = self.infile.read(self.dataSize)
+            if self.sackMode and seqNum in exclusion:
+                continue
+            # we send 1400 bytes at a time/
             # if we finish sending the file
             if data == "":
                 if self.finalAckNum == None:
@@ -119,6 +129,7 @@ class Sender(BasicSender.BasicSender):
     # first greeting packet timeout
     def handle_start_timeout(self):
         while True:
+            print("Timeout")
             self.send(self.sentPackets[self.seqNum])
             print("Sender.py: Sending start|" + str(self.seqNum))
             message = self.receive(self.timeout)
@@ -128,16 +139,6 @@ class Sender(BasicSender.BasicSender):
                 return        
 
     def handle_new_ack(self, ack):
-        ackType = self.get_ack_type(ack)
-        if ackType == "sack":
-            return self.do_sack_case(ack)
-        elif ackType == "ack":
-            return self.do_ack_case(ack)
-        else:
-            print("Error: Did not receive ack")
-            exit(1)
-            
-    def do_ack_case(self, ack):
         # if the ack does not have a correct checksum, drop the packet
         # most likely we need to wait for the timeout to resend the packet again
         if Checksum.validate_checksum(ack) == False:
@@ -153,9 +154,6 @@ class Sender(BasicSender.BasicSender):
         if ackSeqNum > self.seqNum:
             return "Forward"
         return "Unknown"
-            
-    def do_sack_case(self, ack):
-        pass
         
     def handle_dup_ack(self, ack):
         self.duplicates += 1
@@ -165,14 +163,22 @@ class Sender(BasicSender.BasicSender):
             print msg
     
     def get_ack_type(self, message):
-        return message[:message.find("|")]
+        return self.split_packet(message)[0]
     
     def get_packet_seq_num(self, message):
-        return int(message[message.find("|") + 1: message.rfind("|")])
+        seqString = self.split_packet(message)[1]
+        if self.sackMode:
+            return int(seqString.split(";")[0])
+        return int(seqString)
     
-    def get_ack_checksum(self, message):
-        return int(message[message.rfind("|") + 1:])
+    def get_sack_nums(self, message):
+        seqString = self.split_packet(message)[1]
+        stringNums = re.findall(r'\d+', seqString)
+        nums = [int(s) for s in stringNums] 
+        return nums[1:]
 
+    def get_ack_checksum(self, message):
+        return int(self.split_packet(message)[3])
 
 '''
 This will be run if you run this script from the command line. You should not
