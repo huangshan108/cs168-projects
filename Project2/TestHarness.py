@@ -15,10 +15,13 @@ you want to run. The tests automatically register themselves with the
 forwarder, so they will magically be run.
 """
 def tests_to_run(forwarder):
-    from tests import BasicTest, RandomDropTest, SackRandomDropTest
-    BasicTest.BasicTest(forwarder, "README")
-    RandomDropTest.RandomDropTest(forwarder, "README")
-    #SackRandomDropTest.SackRandomDropTest(forwarder, "README")
+    from tests import BasicTest, RandomDropTest, SackRandomDropTest, DuplicatesPacketsTest, DuplicateAcksTest
+    filename = "lorem-ipsum.txt"
+    BasicTest.BasicTest(forwarder, filename)
+    RandomDropTest.RandomDropTest(forwarder, filename)
+    # SackRandomDropTest.SackRandomDropTest(forwarder, filename)
+    DuplicatesPacketsTest.DuplicatesPacketsTest(forwarder, filename)
+    DuplicateAcksTest.DuplicateAcksTest(forwarder, filename)
 """
 Testing is divided into two pieces: this forwarder and a set of test cases in
 the tests directory.
@@ -94,11 +97,16 @@ class Forwarder(object):
         """
         self.current_test.handle_tick(self.tick_interval)
         for p in self.out_queue:
+            # print "in _tick: ", p.seqno
             self._send(p)
         self.out_queue = []
 
     def _send(self, packet):
         """ Send a packet. """
+        # print "packet.seqno: ", packet.seqno
+        # print "self.start_seqno_base", self.start_seqno_base
+        # print "seqno: ", packet.seqno + self.start_seqno_base
+        # print 
         packet.update_packet(seqno=packet.seqno + self.start_seqno_base, update_checksum=False)
         self.sock.sendto(packet.full_packet, packet.address)
 

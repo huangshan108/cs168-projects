@@ -28,13 +28,16 @@ class Sender(BasicSender.BasicSender):
         # sync with the receiver with "greeting message"
         firstPacket = self.make_packet("start", self.seqNum, "")
         self.send(firstPacket)
+        print("Sender.py: Sending start|" + str(self.seqNum))
         self.sentPackets[self.seqNum] = firstPacket
         message = self.receive(self.timeout)
         # no response from receiver when trying to establish the connection
         if message == None:
-            print("yes")
             self.handle_start_timeout()
-        print(self.seqNum)
+        #####################
+        else:
+            print("Sender.py: Received " + message)
+        ######################
         self.seqNum += 1
         # got response from the receiver and the connection has been established,
         # start to send the data packet
@@ -42,22 +45,34 @@ class Sender(BasicSender.BasicSender):
         while True:
             message = self.receive(self.timeout)              
             if message == None:
+                print("Timeout")
                 if self.finalAckNum != None and self.seqNum == self.finalAckNum:
                     break
                 self.do_send(self.seqNum, self.seqNum + self.windowSize)
+                self.duplicates = 0
                 continue
+            print("Sender.py: Received " + message)
             returnedMessage = self.handle_new_ack(message)
             if returnedMessage == "Checksum":
                 continue
             if returnedMessage == "Duplicate":
+                self.handle_dup_ack(message)
                 if self.duplicates == 3:
                     self.send(self.sentPackets[self.seqNum])
+                    print("3 duplicates")
+                    print("Sender.py: Sending data|" + str(self.seqNum))
                     self.duplicates = 0
                 continue
             if returnedMessage == "OldAck":
                 continue
             if returnedMessage == "Forward":
+                self.duplicates = 0
+                ackSeqNum = self.get_packet_seq_num(message)
                 numPacketsToSend = ackSeqNum - self.seqNum
+                self.seqNum = ackSeqNum
+                print(self.finalAckNum)
+                if self.seqNum == self.finalAckNum:
+                    break
                 self.do_send(self.seqNum + self.windowSize - numPacketsToSend, self.seqNum + self.windowSize)
                 continue
             if returnedMessage == "Unknown":
@@ -66,15 +81,19 @@ class Sender(BasicSender.BasicSender):
         
         endPacket = self.make_packet("end", self.seqNum, "")
         self.send(endPacket)
+        print("Sender.py: Sending end|" + str(self.seqNum))
         while True:
             message = self.receive(self.timeout)
             if message == None:
                 self.send(endPacket)
+                print("Sender.py: Sending end|" + str(self.seqNum))
                 continue
+            print("Sender.py: Received " + message)
             packetSeqNum = self.get_packet_seq_num(message)
             if packetSeqNum == self.seqNum + 1:
                 break
         print "DONE!"
+        exit()
             
         
         
@@ -85,30 +104,35 @@ class Sender(BasicSender.BasicSender):
             data = self.infile.read(self.dataSize)
             # if we finish sending the file
             if data == "":
-                self.finalAckNum = seqNum
+                if self.finalAckNum == None:
+                    self.finalAckNum = seqNum
                 return
             if seqNum not in self.sentPackets:
                 packet = self.make_packet("data", seqNum, data)
                 self.sentPackets[seqNum] = packet
                 self.send(packet)
+                print("Sender.py: Sending data|" + str(seqNum))
             else:
                 self.send(self.sentPackets[seqNum])
+                print("Sender.py: Sending data|" + str(seqNum))
     
     # first greeting packet timeout
     def handle_start_timeout(self):
         while True:
             self.send(self.sentPackets[self.seqNum])
+            print("Sender.py: Sending start|" + str(self.seqNum))
             message = self.receive(self.timeout)
             # if we finally have a response, we can start to send the new ack
             if message != None and self.get_packet_seq_num(message) == self.seqNum + 1:
+                print("Sender.py: Received " + message)
                 return        
 
     def handle_new_ack(self, ack):
         ackType = self.get_ack_type(ack)
         if ackType == "sack":
-            self.do_sack_case(ack)
+            return self.do_sack_case(ack)
         elif ackType == "ack":
-            self.do_ack_case(ack)
+            return self.do_ack_case(ack)
         else:
             print("Error: Did not receive ack")
             exit(1)
@@ -124,12 +148,9 @@ class Sender(BasicSender.BasicSender):
             return "OldAck"
         # if we got a duplicate ack with seqNum the same as the current seqNum (where the window starts)
         if ackSeqNum == self.seqNum:
-            self.handle_dup_ack(ack)
             return "Duplicate"
         # since it's cumulative acks, we ignore everything as long as we get a ack with higher seqNum
         if ackSeqNum > self.seqNum:
-            self.duplicates = 0
-            self.seqNum = ackSeqNum
             return "Forward"
         return "Unknown"
             
