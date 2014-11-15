@@ -39,28 +39,23 @@ def load_rules():
     rules.reverse()
     rule_file.close()
 
-def scanRules(protocol_type, ip_or_dns, dns_packet = False, port = None):
+def scanRules(protocol_type, ip, dns_packet = False, port = None, dns_server = None):
     protocol_type = protocol_type.upper()
-    ip_or_dns = ip_or_dns.upper()
+    ip = ip.upper()
     for rule in rules:
-        if protocol_type == rule[1]:
-            if dns_packet:
-                return_msg = handleDNS(ip_or_dns, rules)
-                if return_msg == "continue":
-                    continue
-                else:
-                    return return_msg
+        if dns_packet and "DNS" == rule[1]:
+            return_msg = handleDNS(dns_server, rules)
+            if return_msg == "not-match":
+                continue
             else:
-                return_msg_ip = handleIP(ip_or_dns, rule)
-                if return_msg_ip == "continue":
-                    continue
-                elif return_msg_ip:
-                    return_msg_port = handlePort(port, rule)
-                    if return_msg_port == "continue":
-                        continue
-                    else:
-                        return return_msg_port
-                return return_msg_ip
+                return return_msg
+        elif protocol_type == rule[1]:
+            return_msg_ip = handleIP(ip, rule)
+            return_msg_port = handlePort(port, rule)
+            if return_msg_ip == "not-match" or return_msg_port == "not-match":
+                continue
+            else:
+                return return_msg_ip and return_msg_port
     return True
 
 def handleIP(ip, rule):
@@ -73,38 +68,42 @@ def handleIP(ip, rule):
         if rule_ip == geoBinarySearch(ip_to_geo, convert_ip_to_integer(ip)):
             return "PASS" == rule[0]
         else:
-            return "continue"
+            return "not-match"
     # match the ip directly
     elif rule_ip == ip:
         return "PASS" == rule[0]
     # rule is a ip and does not match. continue
     elif rule_ip.find("/") == -1:
-        return "continue"
+        return "not-match"
     # rule is a ip prefix
     else:
         rule_ip, prefix = rule_ip.split("/")
         prefix = int(prefix)
         ip_bytes = ip.split(".")
         rule_ip_bytes = rule_ip.split(".")
+        if prefix == 0:
+            return "PASS" == rule[0] 
         for i in range(0, prefix / 8):
             if int(ip_bytes[i]) != int(rule_ip_bytes[i]):
-                return False
-        return int(ip_bytes[prefix / 8]) >> (8 - prefix % 8) == int(rule_ip_bytes[prefix / 8]) >> (8 - prefix % 8)
+                return "not-match"
+        if int(ip_bytes[prefix / 8]) >> (8 - prefix % 8) == int(rule_ip_bytes[prefix / 8]) >> (8 - prefix % 8):
+            return "PASS" == rule[0]
+        return "not-match"
 
 def handlePort(port, rule):
     rule_port = rule[3]
     if rule_port == "ANY":
         return "PASS" == rule[0]
-    elif port == rule_port:
+    elif str(port) == rule_port:
         return "PASS" == rule[0]
     elif rule_port.find("-") == -1:
-        return "continue"
+        return "not-match"
     else:
         starting_port, ending_port = rule_port.split("-")
         if port <= int(ending_port) and port >= int(starting_port):
             return "PASS" == rule[0]
         else:
-            return "continue"
+            return "not-match"
 
 def handleDNS(dns, rule):
     dns_rule = rule[3]
@@ -112,10 +111,10 @@ def handleDNS(dns, rule):
         if len(dns) > len(dns[1:]) and dns_rule[1:] == dns[(len(dns) - len(dns_rule[1:])):]:
             return "PASS" == rule[0]
         else:
-            return "continue"
+            return "not-match"
     elif dns_rule == dns:
         return "PASS" == rule[0]
-    return "continue"
+    return "not-match"
 
 
 
