@@ -71,22 +71,30 @@ class Firewall:
         IPHeaderNumBytes = 4 * IPHeaderNumWords
         protocolHeader = pkt[IPHeaderNumBytes:]
         doPass = True
+        port = None
+        print "This is a ", protocol, " packet."
         if protocol == 'ICMP':
             typeNum = self.getICMPType(protocolHeader)
             if pkt_dir == PKT_DIR_INCOMING:
+                print "Incoming Packet with source IP: ", IPSourceAddress, " typeNum: ", typeNum
                 doPass = self.scanRules(protocol, IPSourceAddress, False, typeNum)
-            elif pkt_dir == PKT_DIR_OUTGOING: 
+            elif pkt_dir == PKT_DIR_OUTGOING:
+                print "Outgoing Packet with dest IP: ", IPDestAddress, " typeNum: ", typeNum
                 doPass = self.scanRules(protocol, IPDestAddress, False, typeNum)
+
         elif protocol == 'TCP':
             if pkt_dir == PKT_DIR_INCOMING:
                 port = self.getTCPSourcePort(protocolHeader)
+                print "Incoming Packet with source IP: ", IPSourceAddress, " port: ", port
                 doPass = self.scanRules(protocol, IPSourceAddress, False, port)
             elif pkt_dir == PKT_DIR_OUTGOING:
                 port = self.getTCPDestPort(protocolHeader)
+                print "Incoming Packet with source IP: ", IPDestAddress, " port: ", port
                 doPass = self.scanRules(protocol, IPDestAddress, False, port)
         elif protocol == 'UDP':
             if pkt_dir == PKT_DIR_INCOMING:
                 port = self.getUDPSourcePort(protocolHeader)
+                print "Incoming Packet with source IP: ", IPSourceAddress, " port: ", port
                 doPass = self.scanRules(protocol, IPSourceAddress, False, port)
             elif pkt_dir == PKT_DIR_OUTGOING:
                 port = self.getUDPDestPort(protocolHeader)
@@ -99,12 +107,19 @@ class Firewall:
                     DNSQType = self.getDNSQType(DNSquestion, DNSLenName)
                     DNSQClass = self.getDNSQClass(DNSquestion, DNSLenName)
                     DNSNameStr = self.getDNSQNameAsString(DNSquestion)
+                    print "DNSQType: ", DNSQType, " DNSQClass: ", DNSQClass, "DNSQDCount: ", DNSQDCount
                     if (DNSQType == 1 or DNSQType == 28) and DNSQClass == 1 and DNSQDCount == 1:
+                        print "[DNS]Incoming Packet with source IP: ", IPSourceAddress, " port: ", port, " DNSNameStr: ", DNSNameStr
                         doPass = self.scanRules(protocol, IPDestAddress, True, port, DNSNameStr)
                     else:
+                        print "Incoming Packet with source IP: ", IPDestAddress, " port: ", port
                         doPass = self.scanRules(protocol, IPDestAddress, False, port)
                 else:
+                    print "Incoming Packet with source IP: ", IPDestAddress, " port: ", port
                     doPass = self.scanRules(protocol, IPDestAddress, False, port)
+
+        print "doPass: ", doPass
+        print
         if doPass == False:
             return
         if pkt_dir == PKT_DIR_INCOMING:
@@ -168,12 +183,12 @@ class Firewall:
         byteNum = 0
         url = ""
         while ord(DNSquestion[byteNum]) != 0:
-            for i in range(1, ord(DNSquestion[byteNum])):
-                url += chr(ord(DNSquestion[byteNum]))
+            for i in range(1, ord(DNSquestion[byteNum])+1):
+                url += chr(ord(DNSquestion[byteNum+i]))
             byteNum += ord(DNSquestion[byteNum]) + 1
             if ord(DNSquestion[byteNum]) != 0:
                 url += '.'
-        return DNSquestion[:byteNum+1]
+        return url
         
     
     def getDNSQNameLength(self, DNSQName):
@@ -182,11 +197,11 @@ class Firewall:
     
     def getDNSQType(self, DNSquestion, DNSQNameLength):
         #returns integer of QType
-        return struct.unpack('!H', DNSquestion[DNSQNameLength:DNSQNameLength+2])
+        return struct.unpack('!H', DNSquestion[DNSQNameLength:DNSQNameLength+2])[0]
     
     def getDNSQClass(self, DNSquestion, DNSQNameLength):
         #returns integer of QClass
-        return struct.unpack('!H', DNSquestion[DNSQNameLength+2:DNSQNameLength+4])
+        return struct.unpack('!H', DNSquestion[DNSQNameLength+2:DNSQNameLength+4])[0]
     
         
     # return True is packet should pass, False if we need to drop it
@@ -197,12 +212,12 @@ class Firewall:
         ip = ip.upper()
         for rule in self.rules:
             if dns_packet and "DNS" == rule[1]:
-                return_msg = self.handleDNS(dns_server, rules)
+                return_msg = self.handleDNS(dns_server, rule)
                 if return_msg == "not-match":
                     continue
                 else:
                     return return_msg
-            elif protocol_type == rule[1]:
+            if protocol_type == rule[1]:
                 return_msg_ip = self.handleIP(ip, rule)
                 return_msg_port = self.handlePort(port, rule)
                 if return_msg_ip == "not-match" or return_msg_port == "not-match":
@@ -259,9 +274,10 @@ class Firewall:
                 return "not-match"
     
     def handleDNS(self, dns, rule):
-        dns_rule = rule[3]
+        dns_rule = rule[2]
+        dns = dns.upper()
         if dns_rule[0] == "*":
-            if len(dns) > len(dns[1:]) and dns_rule[1:] == dns[(len(dns) - len(dns_rule[1:])):]:
+            if len(dns) > len(dns_rule[1:]) and dns_rule[1:] == dns[(len(dns) - len(dns_rule[1:])):]:
                 return "PASS" == rule[0]
             else:
                 return "not-match"
@@ -274,16 +290,18 @@ class Firewall:
     # template: (3360768000, 3360781839, 'AR')
     # IPaddress: the integer notation of an ip address
     def geoBinarySearch(self, IPList, IPaddress):
-        mid = len(IPList)/2
-        if IPaddress >= IPList[mid][0] and IPaddress <= IPList[mid][1]:
-            return IPList[mid][2]
-        elif IPaddress < IPList[mid][0]:
-            return self.geoBinarySearch(IPList[:mid], IPaddress)
-        else:
-            return self.geoBinarySearch(IPList[mid+1:], IPaddress)
+        low = 0
+        high = len(IPList) - 1
+        while low <= high:
+            mid = (low + high) / 2
+            if IPaddress >= IPList[mid][0] and IPaddress <= IPList[mid][1]:
+                return IPList[mid][2]
+            elif IPaddress < IPList[mid][0]:
+                high = mid - 1
+            else:
+                low = mid + 1
         
     def convert_ip_to_integer(self, ip):
         (one, two, three, four) = ip.split(".")
         ip_integer = int(one) * 2 ** 24 + int(two) * 2 ** 16 + int(three) * 2 ** 8 + int(four)
         return ip_integer
-        
