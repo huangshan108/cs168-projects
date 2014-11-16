@@ -109,13 +109,13 @@ class Firewall:
                     DNSNameStr = self.getDNSQNameAsString(DNSquestion)
                     print "DNSQType: ", DNSQType, " DNSQClass: ", DNSQClass, "DNSQDCount: ", DNSQDCount
                     if (DNSQType == 1 or DNSQType == 28) and DNSQClass == 1 and DNSQDCount == 1:
-                        print "[DNS]Incoming Packet with source IP: ", IPSourceAddress, " port: ", port, " DNSNameStr: ", DNSNameStr
+                        print "[DNS]Outgoing Packet with dest IP: ", IPDestAddress, " port: ", port, " DNSNameStr: ", DNSNameStr
                         doPass = self.scanRules(protocol, IPDestAddress, True, port, DNSNameStr)
                     else:
-                        print "Incoming Packet with source IP: ", IPDestAddress, " port: ", port
+                        print "Outgoing Packet with dest IP: ", IPDestAddress, " port: ", port
                         doPass = self.scanRules(protocol, IPDestAddress, False, port)
                 else:
-                    print "Incoming Packet with source IP: ", IPDestAddress, " port: ", port
+                    print "Outgoing Packet with dest IP: ", IPDestAddress, " port: ", port
                     doPass = self.scanRules(protocol, IPDestAddress, False, port)
 
         print "doPass: ", doPass
@@ -164,10 +164,10 @@ class Firewall:
         return struct.unpack('!H', UDPheader[6:8])[0]
     
     def getICMPType(self, ICMPheader):
-        return ICMPheader[0]
+        return ord(ICMPheader[0])
     
     def getDNSQDCount(self, DNSheader):
-         return struct.unpack('!H', DNSheader[4:6])[0]
+        return struct.unpack('!H', DNSheader[4:6])[0]
     
     def getDNSQuestion(self, DNSheader):
         return DNSheader[12:]

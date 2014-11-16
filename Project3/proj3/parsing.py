@@ -129,101 +129,121 @@ def convert_ip_to_integer(ip):
 
 
 load_geoipdb()
-# load_rules()
+load_rules()
 
-rules = [
-    ['PASS', 'ICMP', 'ANY', '8'],
-    ['DROP', 'ICMP', 'ANY', '0-1'],
-    ['DROP', 'ICMP', '4.4.4.4', 'ANY'],
-    ['DROP', 'ICMP', '128.0.0.0/1', 'ANY'],
-    ['DROP', 'ICMP', '64.96.0.0/11', 'ANY'],
-    ['DROP', 'ICMP', 'CH', 'ANY']
-]
+# rules = [
+#     ['PASS', 'ICMP', 'ANY', '8'],
+#     ['DROP', 'ICMP', 'ANY', '0-1'],
+#     ['DROP', 'ICMP', '4.4.4.4', 'ANY'],
+#     ['DROP', 'ICMP', '128.0.0.0/1', 'ANY'],
+#     ['DROP', 'ICMP', '64.96.0.0/11', 'ANY'],
+#     ['DROP', 'ICMP', 'CH', 'ANY']
+# ]
 
-def ICMPtest():
-    print "Running ICMP tests..."
-    # define new rules here
-    # in reverse order, as a format of a list, all caps!
-    # please make sure the most bottom one in the rule.config goes to the
-    # most top in the list below
+# def ICMPtest():
+#     print "Running ICMP tests..."
+#     # define new rules here
+#     # in reverse order, as a format of a list, all caps!
+#     # please make sure the most bottom one in the rule.config goes to the
+#     # most top in the list below
     
-    # ip field in rules can be in one of the format of 10.0.0.1, 10.0.0.0/8, "AU"
-    # make sure no bad prefixes, like 1.0.0.0/3
-    # types are from 0-11
+#     # ip field in rules can be in one of the format of 10.0.0.1, 10.0.0.0/8, "AU"
+#     # make sure no bad prefixes, like 1.0.0.0/3
+#     # types are from 0-11
 
-    assert scanRules("ICMP", "10.0.0.1", False, 8) == True
-    assert scanRules("ICMP", "10.0.0.1", False, 1) == False
-    assert scanRules("ICMP", "4.4.4.4", False, 8) == True
-    assert scanRules("ICMP", "4.4.4.4", False, 9) == False
-    assert scanRules("ICMP", "7.7.7.7", False, 10) == True #pass by default
-    assert scanRules("ICMP", "128.1.2.3", False, 8) == True
-    assert scanRules("ICMP", "128.1.2.3", False, 11) == False
-    assert scanRules("ICMP", "64.100.2.3", False, 11) == False
-    assert scanRules('ICMP', '5.1.103.254', False, 6) == False
+#     assert scanRules("ICMP", "10.0.0.1", False, 8) == True
+#     assert scanRules("ICMP", "10.0.0.1", False, 1) == False
+#     assert scanRules("ICMP", "4.4.4.4", False, 8) == True
+#     assert scanRules("ICMP", "4.4.4.4", False, 9) == False
+#     assert scanRules("ICMP", "7.7.7.7", False, 10) == True #pass by default
+#     assert scanRules("ICMP", "128.1.2.3", False, 8) == True
+#     assert scanRules("ICMP", "128.1.2.3", False, 11) == False
+#     assert scanRules("ICMP", "64.100.2.3", False, 11) == False
+#     assert scanRules('ICMP', '5.1.103.254', False, 6) == False
     
-    print "All ICMP tests Passed!"
+#     print "All ICMP tests Passed!"
 
-# rules for TCP tests
-rules += [
-    ['PASS', 'TCP', 'ANY', '8'],
-    ['DROP', 'TCP', 'ANY', '0-1'],
-    ['DROP', 'TCP', '4.4.4.4', 'ANY'],
-    ['DROP', 'TCP', '128.0.0.0/1', 'ANY'],
-    ['DROP', 'TCP', '64.96.0.0/11', 'ANY'],
-    ['DROP', 'TCP', 'CH', 'ANY']
-]
+# # rules for TCP tests
+# rules += [
+#     ['PASS', 'TCP', 'ANY', '8'],
+#     ['DROP', 'TCP', 'ANY', '0-1'],
+#     ['DROP', 'TCP', '4.4.4.4', 'ANY'],
+#     ['DROP', 'TCP', '128.0.0.0/1', 'ANY'],
+#     ['DROP', 'TCP', '64.96.0.0/11', 'ANY'],
+#     ['DROP', 'TCP', 'CH', 'ANY']
+# ]
 
-def TCPtest():
-    print "Running TCP tests..."
-    assert scanRules("TCP", "10.0.0.1", False, 8) == True
-    assert scanRules("TCP", "10.0.0.1", False, 1) == False
-    assert scanRules("TCP", "4.4.4.4", False, 8) == True
-    assert scanRules("TCP", "4.4.4.4", False, 9) == False
-    assert scanRules("TCP", "7.7.7.7", False, 10) == True #pass by default
-    assert scanRules("TCP", "128.1.2.3", False, 8) == True
-    assert scanRules("TCP", "128.1.2.3", False, 11) == False
-    assert scanRules("TCP", "64.100.2.3", False, 11) == False
-    assert scanRules('TCP', '5.1.103.254', False, 6) == False
+# def TCPtest():
+#     print "Running TCP tests..."
+#     assert scanRules("TCP", "10.0.0.1", False, 8) == True
+#     assert scanRules("TCP", "10.0.0.1", False, 1) == False
+#     assert scanRules("TCP", "4.4.4.4", False, 8) == True
+#     assert scanRules("TCP", "4.4.4.4", False, 9) == False
+#     assert scanRules("TCP", "7.7.7.7", False, 10) == True #pass by default
+#     assert scanRules("TCP", "128.1.2.3", False, 8) == True
+#     assert scanRules("TCP", "128.1.2.3", False, 11) == False
+#     assert scanRules("TCP", "64.100.2.3", False, 11) == False
+#     assert scanRules('TCP', '5.1.103.254', False, 6) == False
     
-    print "All TCP tests Passed!"
+#     print "All TCP tests Passed!"
 
-# rules for UDP tests
-rules += [
-    ['PASS', 'UDP', 'ANY', '8'],
-    ['DROP', 'UDP', 'ANY', '0-1'],
-    ['DROP', 'UDP', '4.4.4.4', 'ANY'],
-    ['DROP', 'UDP', '128.0.0.0/1', 'ANY'],
-    ['DROP', 'UDP', '64.96.0.0/11', 'ANY'],
-    ['DROP', 'UDP', 'CH', 'ANY']
-]
+# # rules for UDP tests
+# rules += [
+#     ['PASS', 'UDP', 'ANY', '8'],
+#     ['DROP', 'UDP', 'ANY', '0-1'],
+#     ['DROP', 'UDP', '4.4.4.4', 'ANY'],
+#     ['DROP', 'UDP', '128.0.0.0/1', 'ANY'],
+#     ['DROP', 'UDP', '64.96.0.0/11', 'ANY'],
+#     ['DROP', 'UDP', 'CH', 'ANY']
+# ]
 
-def UDPtest():
-    print "Running UDP tests..."
-    assert scanRules("UDP", "10.0.0.1", False, 8) == True
-    assert scanRules("UDP", "10.0.0.1", False, 1) == False
-    assert scanRules("UDP", "4.4.4.4", False, 8) == True
-    assert scanRules("UDP", "4.4.4.4", False, 9) == False
-    assert scanRules("UDP", "7.7.7.7", False, 10) == True #pass by default
-    assert scanRules("UDP", "128.1.2.3", False, 8) == True
-    assert scanRules("UDP", "128.1.2.3", False, 11) == False
-    assert scanRules("UDP", "64.100.2.3", False, 11) == False
-    assert scanRules('UDP', '5.1.103.254', False, 6) == False
+# def UDPtest():
+#     print "Running UDP tests..."
+#     assert scanRules("UDP", "10.0.0.1", False, 8) == True
+#     assert scanRules("UDP", "10.0.0.1", False, 1) == False
+#     assert scanRules("UDP", "4.4.4.4", False, 8) == True
+#     assert scanRules("UDP", "4.4.4.4", False, 9) == False
+#     assert scanRules("UDP", "7.7.7.7", False, 10) == True #pass by default
+#     assert scanRules("UDP", "128.1.2.3", False, 8) == True
+#     assert scanRules("UDP", "128.1.2.3", False, 11) == False
+#     assert scanRules("UDP", "64.100.2.3", False, 11) == False
+#     assert scanRules('UDP', '5.1.103.254', False, 6) == False
     
-    print "All UDP tests Passed!"
+#     print "All UDP tests Passed!"
 
 
 
-# rules for DNS tests
-rules += [
-
-]
-
-def DNStest():
-    print "Running DNS tests..."
+# # rules for DNS tests
+# # just to make things clear:
+# # if rule is GOOGLE.COM, then WWW.GOOGLE.COM does not match with this rule
+# # WWW.GOOGLE.COM only matches with *.GOOGLE.COM
+# # even though GOOGLE.COM redirects to WWW.GOOGLE.COM
+# rules += [
+#     ['PASS', 'DNS', '*.BERKELEY.EDU'],
+#     ['DROP', 'DNS', '*.EDU'],
+#     ['DROP', 'DNS', 'WWW.YOUTUBE.COM'],
     
-    print "All DNS tests Passed!"
+    
+#     ['DROP', 'UDP', 'ANY', '5'],
+#     ['DROP', 'UDP', '22.22.22.22', 'ANY'],
+#     ['DROP', 'UDP', 'JP', 'ANY']
+# ]
 
-ICMPtest()
-UDPtest()
-TCPtest()
-DNStest()
+# def DNStest():
+#     print "Running DNS tests..."
+#     assert scanRules("UDP", "10.0.0.1", True, 8, 'STANFORD.EDU') == True
+#     assert scanRules("UDP", "10.0.0.3", True, 2, 'STANFORD.EDU') == False
+#     assert scanRules("UDP", "10.0.0.3", True, 2, 'CS.BERKELEY.EDU') == True
+#     assert scanRules("UDP", "10.0.0.3", True, 1, 'CS.BERKELEY.EDU') == False
+#     assert scanRules("UDP", "10.0.0.3", True, 2, 'YOUTUBE.COM') == True
+#     assert scanRules("UDP", "10.0.0.3", True, 2, 'WWW.YOUTUBE.COM') == False
+    
+#     assert scanRules("UDP", "123.123.123.123", True, 5, 'BING.COM') == False # Dropped by UDP
+#     assert scanRules("UDP", "22.22.22.22", True, 6, 'BING.COM') == False # Dropped by UDP
+#     assert scanRules("UDP", "1.1.100.23", True, 6, 'BING.COM') == False # Dropped by UDP
+#     print "All DNS tests Passed!"
+
+# ICMPtest()
+# UDPtest()
+# TCPtest()
+# DNStest()
