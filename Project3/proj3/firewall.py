@@ -50,6 +50,8 @@ class Firewall:
         IPHeaderNumWords = self.getIPHeaderLength(pkt)
         if IPHeaderNumWords < 5:
             return
+        if len(pkt) < 20:
+            return
         IPTotalLen = self.getIPTotalLength(pkt)
         if IPTotalLen != len(pkt):
             return
@@ -72,54 +74,54 @@ class Firewall:
         protocolHeader = pkt[IPHeaderNumBytes:]
         doPass = True
         port = None
-        print "This is a ", protocol, " packet."
         if protocol == 'ICMP':
+            if len(protocolHeader) < 4:
+                return
             typeNum = self.getICMPType(protocolHeader)
             if pkt_dir == PKT_DIR_INCOMING:
-                print "Incoming Packet with source IP: ", IPSourceAddress, " typeNum: ", typeNum
                 doPass = self.scanRules(protocol, IPSourceAddress, False, typeNum)
             elif pkt_dir == PKT_DIR_OUTGOING:
-                print "Outgoing Packet with dest IP: ", IPDestAddress, " typeNum: ", typeNum
                 doPass = self.scanRules(protocol, IPDestAddress, False, typeNum)
-
         elif protocol == 'TCP':
+            if len(protocolHeader) < 20:
+                return
             if pkt_dir == PKT_DIR_INCOMING:
                 port = self.getTCPSourcePort(protocolHeader)
-                print "Incoming Packet with source IP: ", IPSourceAddress, " port: ", port
                 doPass = self.scanRules(protocol, IPSourceAddress, False, port)
             elif pkt_dir == PKT_DIR_OUTGOING:
                 port = self.getTCPDestPort(protocolHeader)
-                print "Incoming Packet with source IP: ", IPDestAddress, " port: ", port
                 doPass = self.scanRules(protocol, IPDestAddress, False, port)
         elif protocol == 'UDP':
+            if len(protocolHeader) < 8:
+                return
             if pkt_dir == PKT_DIR_INCOMING:
                 port = self.getUDPSourcePort(protocolHeader)
-                print "Incoming Packet with source IP: ", IPSourceAddress, " port: ", port
                 doPass = self.scanRules(protocol, IPSourceAddress, False, port)
             elif pkt_dir == PKT_DIR_OUTGOING:
                 port = self.getUDPDestPort(protocolHeader)
                 if port == 53:
                     DNSheader = protocolHeader[8:]
+                    if len(DNSheader) < 12:
+                        return
                     DNSquestion = self.getDNSQuestion(DNSheader)
                     DNSQDCount = self.getDNSQDCount(DNSheader)
                     DNSQNameBytes = self.getDNSQNameAsBytes(DNSquestion)
+                    if DNSQNameBytes == None:
+                        return
                     DNSLenName = self.getDNSQNameLength(DNSQNameBytes)
+                    if len(DNSquestion) < DNSLenName + 4:
+                        return
                     DNSQType = self.getDNSQType(DNSquestion, DNSLenName)
                     DNSQClass = self.getDNSQClass(DNSquestion, DNSLenName)
                     DNSNameStr = self.getDNSQNameAsString(DNSquestion)
-                    print "DNSQType: ", DNSQType, " DNSQClass: ", DNSQClass, "DNSQDCount: ", DNSQDCount
+                    if DNSNameStr == None:
+                        return
                     if (DNSQType == 1 or DNSQType == 28) and DNSQClass == 1 and DNSQDCount == 1:
-                        print "[DNS]Outgoing Packet with dest IP: ", IPDestAddress, " port: ", port, " DNSNameStr: ", DNSNameStr
                         doPass = self.scanRules(protocol, IPDestAddress, True, port, DNSNameStr)
                     else:
-                        print "Outgoing Packet with dest IP: ", IPDestAddress, " port: ", port
                         doPass = self.scanRules(protocol, IPDestAddress, False, port)
                 else:
-                    print "Outgoing Packet with dest IP: ", IPDestAddress, " port: ", port
                     doPass = self.scanRules(protocol, IPDestAddress, False, port)
-
-        print "doPass: ", doPass
-        print
         if doPass == False:
             return
         if pkt_dir == PKT_DIR_INCOMING:
@@ -175,19 +177,25 @@ class Firewall:
     def getDNSQNameAsBytes(self, DNSquestion):
         #return the QName as a string of hex values (see spec)
         byteNum = 0
-        while ord(DNSquestion[byteNum]) != 0:
-            byteNum += ord(DNSquestion[byteNum]) + 1
+        try:
+            while ord(DNSquestion[byteNum]) != 0:
+                byteNum += ord(DNSquestion[byteNum]) + 1
+        except IndexError:
+            return None
         return DNSquestion[:byteNum+1]
     
     def getDNSQNameAsString(self, DNSquestion):
         byteNum = 0
         url = ""
-        while ord(DNSquestion[byteNum]) != 0:
-            for i in range(1, ord(DNSquestion[byteNum])+1):
-                url += chr(ord(DNSquestion[byteNum+i]))
-            byteNum += ord(DNSquestion[byteNum]) + 1
-            if ord(DNSquestion[byteNum]) != 0:
-                url += '.'
+        try:
+            while ord(DNSquestion[byteNum]) != 0:
+                for i in range(1, ord(DNSquestion[byteNum])+1):
+                    url += chr(ord(DNSquestion[byteNum+i]))
+                byteNum += ord(DNSquestion[byteNum]) + 1
+                if ord(DNSquestion[byteNum]) != 0:
+                    url += '.'
+        except IndexError:
+            return None
         return url
         
     
