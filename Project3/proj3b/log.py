@@ -21,7 +21,7 @@ def logHTTP(request, response):
 			object_size = field.split()[1]
 			break;
 
-	httplog.write("host_name: %s\nmethod: %s\npath: %s\nversion: %s\nstatus_code: %s\nobject_size: %s\n\n" % (host_name, method, path, version, status_cdoe, object_size))
+	httplog.write(host_name + " " + method + " " + path + " " + version + " " + status_cdoe + " " + object_size)
 	httplog.flush()
 
 request = "GET / HTTP/1.1\nHost: google.com\nUser-Agent: Web-sniffer/1.0.46 (+http://web-sniffer.net/ Accept-Encoding: gzip\nAccept-Charset: ISO-8859-1,UTF-8;q=0.7,*;q=0.7 Cache-Control: no-cache\nAccept-Language: de,en;q=0.7,en-us;q=0.3\n"
