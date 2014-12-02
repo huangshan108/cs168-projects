@@ -408,13 +408,13 @@ class Firewall:
         for field in request:
             if field.split()[0] == "Host:":
                 host_name = field.split()[1]
-                break;
+                break
         for field in response:
             if field.split()[0] == "Content-Length:":
                 object_size = field.split()[1]
-                break;
+                break
 
-        self.httplog.write("host_name: %s\nmethod: %s\npath: %s\nversion: %s\nstatus_code: %s\nobject_size: %s\n\n" % (host_name, method, path, version, status_cdoe, object_size))
+        self.httplog.write(host_name + " " + method + " " + path + " " + version + " " + status_cdoe + " " + object_size)
         self.httplog.flush()
 
     # return "LOG" if we need to log this http packet
