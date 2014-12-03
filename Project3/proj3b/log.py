@@ -28,6 +28,16 @@ request = "GET / HTTP/1.1\nHost: google.com\nUser-Agent: Web-sniffer/1.0.46 (+ht
 response = "HTTP/1.1 301 Moved Permanently\nLocation: http://www.google.com/\nContent-Type: text/html; charset=UTF-8\nDate: Mon, 18 Nov 2013 23:58:12 GMT\nExpires: Wed, 18 Dec 2013 23:58:12 GMT\nCache-Control: public, max-age=2 592000\nServer: gws\nContent-Length: 219\nX-XSS-Protection: 1; mode=block\nX-Frame-Options: SAMEORIGIN Alternate-Protocol: 80:quic\n"
 
 logHTTP(request, response)
+def getHostHeader(request):
+	beginning_index = request.find("Host: ")
+	if beginning_index == -1:
+		return None
+	beginning_index += 5
+	end_index = request.find("\n", beginning_index)
+	temp = request[beginning_index:end_index].split()
+	if temp == []:
+		return
+	return temp[0]
 
 
 rules = []
