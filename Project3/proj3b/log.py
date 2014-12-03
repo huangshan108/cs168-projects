@@ -21,7 +21,7 @@ def logHTTP(request, response):
 			object_size = field.split()[1]
 			break;
 
-	httplog.write(host_name + " " + method + " " + path + " " + version + " " + status_cdoe + " " + object_size)
+	httplog.write(host_name + " " + method + " " + path + " " + version + " " + status_cdoe + " " + object_size + "\n")
 	httplog.flush()
 
 request = "GET / HTTP/1.1\nHost: google.com\nUser-Agent: Web-sniffer/1.0.46 (+http://web-sniffer.net/ Accept-Encoding: gzip\nAccept-Charset: ISO-8859-1,UTF-8;q=0.7,*;q=0.7 Cache-Control: no-cache\nAccept-Language: de,en;q=0.7,en-us;q=0.3\n"
@@ -29,15 +29,15 @@ response = "HTTP/1.1 301 Moved Permanently\nLocation: http://www.google.com/\nCo
 
 logHTTP(request, response)
 def getHostHeader(request):
-	beginning_index = request.find("Host: ")
-	if beginning_index == -1:
-		return None
-	beginning_index += 5
-	end_index = request.find("\n", beginning_index)
-	temp = request[beginning_index:end_index].split()
-	if temp == []:
-		return
-	return temp[0]
+    beginning_index = request.find("Host: ")
+    if beginning_index == -1:
+        return None
+    beginning_index += 5
+    end_index = request.find("\n", beginning_index)
+    temp = request[beginning_index:end_index].split()
+    if temp == []:
+        return
+    return temp[0]
 
 
 rules = []

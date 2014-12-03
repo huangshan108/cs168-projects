@@ -16,11 +16,13 @@ class Firewall:
         self.ip_to_geo = []
         self.rules = []
         self.log_rules = []
-        self.http_out_mapping = {}
-        self.http_inc_mapping = {}
         self.inc_seq_num_mapping = {} #maps tuple of (int_port, ext_ip) to seqNum for incoming packets
         self.out_seq_num_mapping = {} #maps tuple of (int_port, ext_ip) to seqNum for outgoing packets
     
+        self.request_dict = {}
+        self.response_dict = {}
+        self.http_request_done = set()
+        self.http_response_done = set()
         # TODO: Load the firewall rules (from rule_filename) here.
         rule_file = open(config['rule'], "r")
         line = rule_file.readline()
@@ -38,6 +40,8 @@ class Firewall:
         rule_file.close()
         self.rules.reverse()
         self.log_rules.reverse()
+
+        self.httplog = open('http.log', 'a')
 
     # @pkt_dir: either PKT_DIR_INCOMING or PKT_DIR_OUTGOING
     # @pkt: the actual data of the IPv4 packet (including IP header)
@@ -89,22 +93,23 @@ class Firewall:
                 if port == 80:
                     TCPoffset = ord(protocolHeader[12]) >> 4
                     response = protocolHeader[TCPoffset*4:]
-                    index = response.find("\r\n\r\n")
-                    if index != -1:
-                        response = response[:index]
-                        print "response: "
-                        print response
+                    # print "response: ", response
+                    # index = response.find("\r\n\r\n")
+                    # if index != -1:
+                    #     response = response[:index]
+                    #     print "response: "
+                    #     print response
             elif pkt_dir == PKT_DIR_OUTGOING:
                 port = self.getTCPDestPort(protocolHeader)
                 doPass = self.scanRules(protocol, IPDestAddress, False, port)
-                if port == 80:
-                    TCPoffset = ord(protocolHeader[12]) >> 4
-                    request = protocolHeader[TCPoffset*4:]
-                    index = request.find("\r\n\r\n")
-                    if index != -1:
-                        request = request[:index]
-                        print "request: "
-                        print request
+                # if port == 80:
+                #     TCPoffset = ord(protocolHeader[12]) >> 4
+                #     request = protocolHeader[TCPoffset*4:]
+                #     index = request.find("\r\n\r\n")
+                #     if index != -1:
+                #         request = request[:index]
+                #         print "request: "
+                #         print request
         elif protocol == 'UDP':
             if len(protocolHeader) < 8:
                 return
@@ -154,17 +159,17 @@ class Firewall:
                 newIPheader = self.consturctIPheaderDNS(pkt, len(newDNS))
                 finalPacket = newIPheader + newUDP + newDNS
                 self.iface_int.send_ip_packet(finalPacket)
-            
         elif doPass == "PASS":
+            if pkt_dir == PKT_DIR_INCOMING:
+                self.iface_int.send_ip_packet(pkt)
+            elif pkt_dir == PKT_DIR_OUTGOING:
+                self.iface_ext.send_ip_packet(pkt)
             if protocol != 'TCP':
-                if pkt_dir == PKT_DIR_INCOMING:
-                    self.iface_int.send_ip_packet(pkt)
-                elif pkt_dir == PKT_DIR_OUTGOING:
-                    self.iface_ext.send_ip_packet(pkt)
                 return
             extPort = None
             intPort = None
             ext_ip = None
+            tryLog = False
             if pkt_dir == PKT_DIR_INCOMING:
                 extPort = self.getTCPSourcePort(protocolHeader)
                 intPort = self.getTCPDestPort(protocolHeader)
@@ -176,41 +181,73 @@ class Firewall:
             if extPort != 80:
                 return
             TCPSyn = ord(protocolHeader[13]) & 0x02
-            TCPHeaderLen = ord(protocolHeader[12]) * 4
-            NumDataBytes = len(protocolheader) - TCPHeaderLen
+            TCPHeaderLen = (ord(protocolHeader[12]) >> 4) * 4
+            NumDataBytes = len(protocolHeader) - TCPHeaderLen
             TCPSeqNum = struct.unpack('!L', protocolHeader[4:8])[0]
             if TCPSyn != 0 and pkt_dir == PKT_DIR_INCOMING: #packet is syn, packet is incoming
                 if (intPort, ext_ip) not in self.inc_seq_num_mapping:
                     self.inc_seq_num_mapping[(intPort,ext_ip)] = TCPSeqNum + 1
-                    self.http_inc_mapping[(intPort,ext_ip)] = ""
-            elif TCPSyn != 0 and pkt_dir == PKT_DIR_OUTOGING:
+            elif TCPSyn != 0 and pkt_dir == PKT_DIR_OUTGOING:
                 if (intPort, ext_ip) not in self.inc_seq_num_mapping:
-                    self.ext_seq_num_mapping[(intPort,ext_ip)] = TCPSeqNum + 1
-                    self.http_out_mapping[(intPort,ext_ip)] = ""
+                    self.out_seq_num_mapping[(intPort,ext_ip)] = TCPSeqNum + 1
             elif TCPSyn == 0 and pkt_dir == PKT_DIR_INCOMING:
-                if TCPSeqNum > self.inc_seq_num_mapping[(intPort,ext_ip)]:
-                    return
-                elif TCPSeqNum == self.inc_seq_num_mapping[(intPort,ext_ip)]:
-                    self.inc_seq_num_mapping[(intPort,ext_ip)] = TCPSeqNum + len(NumDataBytes)
-                    self.http_inc_mapping[(intPort,ext_ip)] += protocolHeader[TCPHeaderLen:]
+                if NumDataBytes == 0:
+                    if (intPort,ext_ip) in self.inc_seq_num_mapping:
+                        del self.inc_seq_num_mapping[(intPort,ext_ip)]
+                else:
+                    if (intPort,ext_ip) not in self.inc_seq_num_mapping:
+                        self.inc_seq_num_mapping[(intPort,ext_ip)] = (TCPSeqNum + NumDataBytes) % pow(2,32)
+                        tryLog = True
+                    current = self.inc_seq_num_mapping[(intPort,ext_ip)]
+                    if current < 500000:
+                        if TCPSeqNum > current and TCPSeqNum < pow(2,32) - (500000-current):
+                            return
+                    elif TCPSeqNum > self.inc_seq_num_mapping[(intPort,ext_ip)]:
+                        return
+                    elif TCPSeqNum == self.inc_seq_num_mapping[(intPort,ext_ip)]:
+                        self.inc_seq_num_mapping[(intPort,ext_ip)] = (TCPSeqNum + NumDataBytes) % pow(2,32)
+                        tryLog = True
             elif TCPSyn == 0 and pkt_dir == PKT_DIR_OUTGOING:
-                if TCPSeqNum > self.out_seq_num_mapping[(intPort,ext_ip)]:
-                    return
-                elif TCPSeqNum == self.out_seq_num_mapping[(intPort,ext_ip)]:
-                    self.out_seq_num_mapping[(intPort,ext_ip)] = TCPSeqNum + len(NumDataBytes)
-                    self.http_out_mapping[(intPort,ext_ip)] += protocolHeader[TCPHeaderLen:]
+                if NumDataBytes == 0:
+                    if (intPort,ext_ip) in self.out_seq_num_mapping:
+                        del self.out_seq_num_mapping[(intPort,ext_ip)]
+                else:
+                    if (intPort,ext_ip) not in self.out_seq_num_mapping:
+                        self.out_seq_num_mapping[(intPort,ext_ip)] = (TCPSeqNum + NumDataBytes) % pow(2,32)
+                        tryLog = True
+                    current = self.out_seq_num_mapping[(intPort,ext_ip)]
+                    if current < 500000:
+                        if TCPSeqNum > current and TCPSeqNum < pow(2,32) - (500000-current):
+                            return
+                    elif TCPSeqNum > self.out_seq_num_mapping[(intPort,ext_ip)]:
+                        return
+                    elif TCPSeqNum == self.out_seq_num_mapping[(intPort,ext_ip)]:
+                        self.out_seq_num_mapping[(intPort,ext_ip)] = (TCPSeqNum + NumDataBytes) % pow(2,32)
+                        tryLog = True
+
+            if not tryLog:
+                return
+            HTTPheader = protocolHeader[TCPHeaderLen:]
+            request, response = self.processTCPSegs(HTTPheader, intPort, ext_ip, pkt_dir)
             
             # do below after we get all tcp frags
-            host_header = None
-            if pkt_dir == PKT_DIR_OUTGOING:
+            # print "request: "
+            # print request
+            # print "response: "
+            # print response
+            if request != None and response != None:
                 host_header = self.getHostHeader(request)
-            doLog = self.scanLogRules(dns, ext_ip, host_header)
-            
-            if doLog == "LOG":
-                #must be TCP 
-                TCPoffset = ord(protocolHeader[12]) >> 4
-                HTTPheader = protocolHeader[TCPoffset*4:]
-                self.logHTTP(request, response, ext_ip)
+                doLog = self.scanLogRules(ext_ip, host_header)
+                # print "request: " 
+                # print request
+                # print "response: "
+                # print response 
+                # print "ext_ip: ", ext_ip
+                # print "host_header: ", host_header
+                # print "doLog: ", doLog
+                # print
+                if doLog == 'LOG':
+                    self.logHTTP(request, response, ext_ip)
                 
     # TODO: You can add more methods as you want.
     
@@ -456,26 +493,27 @@ class Firewall:
         method = request_line.split()[0]
         path = request_line.split()[1]
         version = request_line.split()[2]
+        # print "response_line: ", response_line
         status_cdoe = response_line.split()[1]
         object_size = "-1"
         for field in request:
             if field.split()[0] == "Host:":
                 host_name = field.split()[1]
-                break;
+                break
         for field in response:
-            if field.split()[0] == "Content-Length:":
+            # print "split: ", field.split()
+            if field.split() != [] and field.split()[0] == "Content-Length:":
                 object_size = field.split()[1]
-                break;
+                break
 
-        self.httplog.write(host_name + " " + method + " " + path + " " + version + " " + status_cdoe + " " + object_size)
+        self.httplog.write(host_name + " " + method + " " + path + " " + version + " " + status_cdoe + " " + object_size + "\n")
         self.httplog.flush()
 
     # return "LOG" if we need to log this http packet
     # return None if we don't need to 
-    def scanLogRules(self, dns, ext_ip, host_header = None):
-        dns = dns.upper()
+    def scanLogRules(self, ext_ip, host_header = None):
         for log_rule in self.log_rules:
-            return_msg = self.handleHostname(dns, ext_ip, host_header, log_rule)
+            return_msg = self.handleHostname(ext_ip, host_header, log_rule)
             if return_msg == "not-match":
                 continue
             else:
@@ -564,19 +602,15 @@ class Firewall:
             return rule[0]
         return "not-match"
     
-    def handleHostname(self, dns, ext_ip, host_header, log_rule):
-        match_dns = self.handleDNS(ip_or_dns, log_rule)
+    def handleHostname(self, ext_ip, host_header, log_rule):
+        match_dns = ""
+        if host_header != None:
+            match_dns = self.handleDNS(host_header.upper(), log_rule)
         match_ip = ""
-        if host_header == None:
-            if ext_ip == log_rule[2]:
-                match_ip = log_rule[0]
-            else:
-                match_ip = "not-match"
+        if ext_ip == log_rule[2]:
+            match_ip = log_rule[0]
         else:
-            if host_header == log_rule[2]:
-                match_ip = log_rule[0]
-            else:
-                match_ip = "not-match"
+            match_ip = "not-match"
         if match_dns == "LOG" or match_ip == "LOG":
             return "LOG"
         return "not-match"
@@ -604,6 +638,7 @@ class Firewall:
     # None if no thus field or field is empty
     def getHostHeader(self, request):
         beginning_index = request.find("Host: ")
+        # print "beginning_index: ", beginning_index
         if beginning_index == -1:
             return None
         beginning_index += 5
@@ -612,3 +647,59 @@ class Firewall:
         if temp == []:
             return
         return temp[0]
+
+    def processTCPSegs(self, seg, int_port, ext_ip, pkt_dir):
+        seg_key = (int_port, ext_ip)
+        
+        request = None
+        response = None
+        
+        if pkt_dir == PKT_DIR_OUTGOING:
+            if seg_key in self.http_request_done:
+                return request, response
+            header_str, is_end = self.parseHeaderSeg(seg)
+            if seg_key in self.request_dict:
+                self.request_dict[seg_key] += header_str
+            else:
+                self.request_dict[seg_key] = header_str
+            if is_end:
+                self.http_request_done.add(seg_key)
+                if seg_key in self.http_response_done:
+                    request = self.request_dict[seg_key]
+                    response = self.response_dict[seg_key]
+                    del self.request_dict[seg_key]
+                    del self.response_dict[seg_key]
+                    self.http_request_done.remove(seg_key)
+                    self.http_response_done.remove(seg_key)
+                    return request, response
+
+        
+        if pkt_dir == PKT_DIR_INCOMING:
+            if seg_key in self.http_response_done:
+                return request, response
+            if seg_key not in self.request_dict:
+                return request, response
+            header_str, is_end = self.parseHeaderSeg(seg)
+
+            if seg_key in self.response_dict:
+                self.response_dict[seg_key] += header_str
+            else:
+                self.response_dict[seg_key] = header_str
+            if is_end:
+                self.http_response_done.add(seg_key)
+                if seg_key in self.http_request_done:
+                    request = self.request_dict[seg_key]
+                    response = self.response_dict[seg_key]
+                    del self.request_dict[seg_key]
+                    del self.response_dict[seg_key]
+                    self.http_request_done.remove(seg_key)
+                    self.http_response_done.remove(seg_key)
+                    return request, response
+
+        return request, response
+
+    def parseHeaderSeg(self, seg):
+        index = seg.find("\r\n\r\n")
+        if index == -1:
+            return seg, False
+        return seg[:index], True
