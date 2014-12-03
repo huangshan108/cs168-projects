@@ -90,26 +90,11 @@ class Firewall:
             if pkt_dir == PKT_DIR_INCOMING:
                 port = self.getTCPSourcePort(protocolHeader)
                 doPass = self.scanRules(protocol, IPSourceAddress, False, port)
-                if port == 80:
-                    TCPoffset = ord(protocolHeader[12]) >> 4
-                    response = protocolHeader[TCPoffset*4:]
-                    # print "response: ", response
-                    # index = response.find("\r\n\r\n")
-                    # if index != -1:
-                    #     response = response[:index]
-                    #     print "response: "
-                    #     print response
+
             elif pkt_dir == PKT_DIR_OUTGOING:
                 port = self.getTCPDestPort(protocolHeader)
                 doPass = self.scanRules(protocol, IPDestAddress, False, port)
-                # if port == 80:
-                #     TCPoffset = ord(protocolHeader[12]) >> 4
-                #     request = protocolHeader[TCPoffset*4:]
-                #     index = request.find("\r\n\r\n")
-                #     if index != -1:
-                #         request = request[:index]
-                #         print "request: "
-                #         print request
+
         elif protocol == 'UDP':
             if len(protocolHeader) < 8:
                 return
@@ -160,11 +145,11 @@ class Firewall:
                 finalPacket = newIPheader + newUDP + newDNS
                 self.iface_int.send_ip_packet(finalPacket)
         elif doPass == "PASS":
-            if pkt_dir == PKT_DIR_INCOMING:
-                self.iface_int.send_ip_packet(pkt)
-            elif pkt_dir == PKT_DIR_OUTGOING:
-                self.iface_ext.send_ip_packet(pkt)
             if protocol != 'TCP':
+                if pkt_dir == PKT_DIR_INCOMING:
+                    self.iface_int.send_ip_packet(pkt)
+                elif pkt_dir == PKT_DIR_OUTGOING:
+                    self.iface_ext.send_ip_packet(pkt)
                 return
             extPort = None
             intPort = None
@@ -179,6 +164,10 @@ class Firewall:
                 intPort = self.getTCPSourcePort(protocolHeader)
                 ext_ip = self.getIPDestAsStr(pkt)
             if extPort != 80:
+                if pkt_dir == PKT_DIR_INCOMING:
+                    self.iface_int.send_ip_packet(pkt)
+                elif pkt_dir == PKT_DIR_OUTGOING:
+                    self.iface_ext.send_ip_packet(pkt)
                 return
             TCPSyn = ord(protocolHeader[13]) & 0x02
             TCPHeaderLen = (ord(protocolHeader[12]) >> 4) * 4
@@ -198,10 +187,10 @@ class Firewall:
                     if (intPort,ext_ip) not in self.inc_seq_num_mapping:
                         self.inc_seq_num_mapping[(intPort,ext_ip)] = (TCPSeqNum + NumDataBytes) % pow(2,32)
                         tryLog = True
-                    current = self.inc_seq_num_mapping[(intPort,ext_ip)]
-                    if current < 500000:
-                        if TCPSeqNum > current and TCPSeqNum < pow(2,32) - (500000-current):
-                            return
+                    elif self.inc_seq_num_mapping[(intPort,ext_ip)] < 500000:
+                        if TCPSeqNum > self.inc_seq_num_mapping[(intPort,ext_ip)]:
+                            if TCPSeqNum < pow(2,32) - (500000-self.inc_seq_num_mapping[(intPort,ext_ip)]):
+                                return
                     elif TCPSeqNum > self.inc_seq_num_mapping[(intPort,ext_ip)]:
                         return
                     elif TCPSeqNum == self.inc_seq_num_mapping[(intPort,ext_ip)]:
@@ -215,37 +204,28 @@ class Firewall:
                     if (intPort,ext_ip) not in self.out_seq_num_mapping:
                         self.out_seq_num_mapping[(intPort,ext_ip)] = (TCPSeqNum + NumDataBytes) % pow(2,32)
                         tryLog = True
-                    current = self.out_seq_num_mapping[(intPort,ext_ip)]
-                    if current < 500000:
-                        if TCPSeqNum > current and TCPSeqNum < pow(2,32) - (500000-current):
-                            return
+                    elif self.out_seq_num_mapping[(intPort,ext_ip)] < 500000:
+                        if TCPSeqNum > self.out_seq_num_mapping[(intPort,ext_ip)]:
+                            if TCPSeqNum < pow(2,32) - (500000-self.out_seq_num_mapping[(intPort,ext_ip)]):
+                                return
                     elif TCPSeqNum > self.out_seq_num_mapping[(intPort,ext_ip)]:
                         return
                     elif TCPSeqNum == self.out_seq_num_mapping[(intPort,ext_ip)]:
                         self.out_seq_num_mapping[(intPort,ext_ip)] = (TCPSeqNum + NumDataBytes) % pow(2,32)
                         tryLog = True
-
+            if pkt_dir == PKT_DIR_INCOMING:
+                self.iface_int.send_ip_packet(pkt)
+            elif pkt_dir == PKT_DIR_OUTGOING:
+                self.iface_ext.send_ip_packet(pkt)
             if not tryLog:
                 return
             HTTPheader = protocolHeader[TCPHeaderLen:]
             request, response = self.processTCPSegs(HTTPheader, intPort, ext_ip, pkt_dir)
             
             # do below after we get all tcp frags
-            # print "request: "
-            # print request
-            # print "response: "
-            # print response
             if request != None and response != None:
                 host_header = self.getHostHeader(request)
                 doLog = self.scanLogRules(ext_ip, host_header)
-                # print "request: " 
-                # print request
-                # print "response: "
-                # print response 
-                # print "ext_ip: ", ext_ip
-                # print "host_header: ", host_header
-                # print "doLog: ", doLog
-                # print
                 if doLog == 'LOG':
                     self.logHTTP(request, response, ext_ip)
                 
@@ -493,16 +473,14 @@ class Firewall:
         method = request_line.split()[0]
         path = request_line.split()[1]
         version = request_line.split()[2]
-        # print "response_line: ", response_line
         status_cdoe = response_line.split()[1]
         object_size = "-1"
         for field in request:
-            if field.split()[0] == "Host:":
+            if field.split()[0].upper() == "HOST:":
                 host_name = field.split()[1]
                 break
         for field in response:
-            # print "split: ", field.split()
-            if field.split() != [] and field.split()[0] == "Content-Length:":
+            if field.split() != [] and field.split()[0].upper() == "CONTENT-LENGTH:":
                 object_size = field.split()[1]
                 break
 
@@ -522,7 +500,6 @@ class Firewall:
     # return "PASS", "DROP", "DENY"
     # ip_or_dns: if ip, pass in the dot notation, not the ip_to_integer
     def scanRules(self, protocol_type, ip, dns_packet = False, port = None, dns_server = None):
-        # print protocol_type
         protocol_type = protocol_type.upper()
         ip = ip.upper()
         for rule in self.rules:
@@ -549,7 +526,6 @@ class Firewall:
             return rule[0]
         # two bytes country code
         elif len(rule_ip) == 2:
-            # print geoBinarySearch(ip_to_geo, convert_ip_to_integer(ip))
             if rule_ip == self.geoBinarySearch(self.ip_to_geo, self.convert_ip_to_integer(ip)):
                 return rule[0]
             else:
@@ -637,8 +613,7 @@ class Firewall:
     # return the host in header if one exists,
     # None if no thus field or field is empty
     def getHostHeader(self, request):
-        beginning_index = request.find("Host: ")
-        # print "beginning_index: ", beginning_index
+        beginning_index = request.upper().find("HOST: ")
         if beginning_index == -1:
             return None
         beginning_index += 5
