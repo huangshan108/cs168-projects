@@ -16,7 +16,11 @@ class Firewall:
         self.ip_to_geo = []
         self.rules = []
         self.log_rules = []
-        
+        self.http_out_mapping = {}
+        self.http_inc_mapping = {}
+        self.inc_seq_num_mapping = {} #maps tuple of (int_port, ext_ip) to seqNum for incoming packets
+        self.out_seq_num_mapping = {} #maps tuple of (int_port, ext_ip) to seqNum for outgoing packets
+    
         # TODO: Load the firewall rules (from rule_filename) here.
         rule_file = open(config['rule'], "r")
         line = rule_file.readline()
@@ -34,20 +38,6 @@ class Firewall:
         rule_file.close()
         self.rules.reverse()
         self.log_rules.reverse()
-        
-        # TODO: Load the GeoIP DB ('geoipdb.txt') as well.
-        geoip_file = open("geoipdb.txt", "r")
-        line = geoip_file.readline().strip()
-        while line != "":
-            (starting_ip, ending_ip, county_code)  = line.split(" ")
-            starting_ip_int = self.convert_ip_to_integer(starting_ip)
-            ending_ip_int = self.convert_ip_to_integer(ending_ip)
-            self.ip_to_geo.append((starting_ip_int, ending_ip_int, county_code))
-            line = geoip_file.readline().strip()
-        geoip_file.close()
-            
-        # TODO: Also do some initialization if needed.
-        self.httplog = open('http.log', 'a')
 
     # @pkt_dir: either PKT_DIR_INCOMING or PKT_DIR_OUTGOING
     # @pkt: the actual data of the IPv4 packet (including IP header)
@@ -77,6 +67,7 @@ class Firewall:
                 self.iface_int.send_ip_packet(pkt)
             elif pkt_dir == PKT_DIR_OUTGOING:
                 self.iface_ext.send_ip_packet(pkt)
+            return
         IPHeaderNumBytes = 4 * IPHeaderNumWords
         protocolHeader = pkt[IPHeaderNumBytes:]
         doPass = "PASS"
@@ -95,9 +86,25 @@ class Firewall:
             if pkt_dir == PKT_DIR_INCOMING:
                 port = self.getTCPSourcePort(protocolHeader)
                 doPass = self.scanRules(protocol, IPSourceAddress, False, port)
+                if port == 80:
+                    TCPoffset = ord(protocolHeader[12]) >> 4
+                    response = protocolHeader[TCPoffset*4:]
+                    index = response.find("\r\n\r\n")
+                    if index != -1:
+                        response = response[:index]
+                        print "response: "
+                        print response
             elif pkt_dir == PKT_DIR_OUTGOING:
                 port = self.getTCPDestPort(protocolHeader)
                 doPass = self.scanRules(protocol, IPDestAddress, False, port)
+                if port == 80:
+                    TCPoffset = ord(protocolHeader[12]) >> 4
+                    request = protocolHeader[TCPoffset*4:]
+                    index = request.find("\r\n\r\n")
+                    if index != -1:
+                        request = request[:index]
+                        print "request: "
+                        print request
         elif protocol == 'UDP':
             if len(protocolHeader) < 8:
                 return
@@ -132,11 +139,12 @@ class Firewall:
         if doPass == "DROP":
             return
         elif doPass == "DENY":
+            #do deny
             if protocol == 'TCP':
                 newIPheader = self.consturctIPheaderTCPRST(pkt)
                 TCPpsuedo = self.getTCPPseudoHeader(newIPheader)
                 origTCPheader = protocolHeader
-                newTCPheader = self.constructTCPheader(origTCPheader, pseudoHeader)
+                newTCPheader = self.constructTCPheader(origTCPheader, TCPpsuedo)
                 finalPacket = newIPheader + newTCPheader
                 self.iface_int.send_ip_packet(finalPacket)
             else: #must be DNS packet
@@ -146,17 +154,64 @@ class Firewall:
                 newIPheader = self.consturctIPheaderDNS(pkt, len(newDNS))
                 finalPacket = newIPheader + newUDP + newDNS
                 self.iface_int.send_ip_packet(finalPacket)
-        elif doPass == "LOG":
-            #must be TCP 
-            TCPoffset = ord(protocolHeader[12])
-            HTTPheader = protocolHeader[TCPoffset*4:]
+            
         elif doPass == "PASS":
+            if protocol != 'TCP':
+                if pkt_dir == PKT_DIR_INCOMING:
+                    self.iface_int.send_ip_packet(pkt)
+                elif pkt_dir == PKT_DIR_OUTGOING:
+                    self.iface_ext.send_ip_packet(pkt)
+                return
+            extPort = None
+            intPort = None
+            ext_ip = None
             if pkt_dir == PKT_DIR_INCOMING:
-                self.iface_int.send_ip_packet(pkt)
+                extPort = self.getTCPSourcePort(protocolHeader)
+                intPort = self.getTCPDestPort(protocolHeader)
+                ext_ip = self.getIPSourceAsStr(pkt)
             elif pkt_dir == PKT_DIR_OUTGOING:
-                self.iface_ext.send_ip_packet(pkt)
-        else:
-            sys.exit("Error: doPass is not valid string")
+                extPort = self.getTCPDestPort(protocolHeader) 
+                intPort = self.getTCPSourcePort(protocolHeader)
+                ext_ip = self.getIPDestAsStr(pkt)
+            if extPort != 80:
+                return
+            TCPSyn = ord(protocolHeader[13]) & 0x02
+            TCPHeaderLen = ord(protocolHeader[12]) * 4
+            NumDataBytes = len(protocolheader) - TCPHeaderLen
+            TCPSeqNum = struct.unpack('!L', protocolHeader[4:8])[0]
+            if TCPSyn != 0 and pkt_dir == PKT_DIR_INCOMING: #packet is syn, packet is incoming
+                if (intPort, ext_ip) not in self.inc_seq_num_mapping:
+                    self.inc_seq_num_mapping[(intPort,ext_ip)] = TCPSeqNum + 1
+                    self.http_inc_mapping[(intPort,ext_ip)] = ""
+            elif TCPSyn != 0 and pkt_dir == PKT_DIR_OUTOGING:
+                if (intPort, ext_ip) not in self.inc_seq_num_mapping:
+                    self.ext_seq_num_mapping[(intPort,ext_ip)] = TCPSeqNum + 1
+                    self.http_out_mapping[(intPort,ext_ip)] = ""
+            elif TCPSyn == 0 and pkt_dir == PKT_DIR_INCOMING:
+                if TCPSeqNum > self.inc_seq_num_mapping[(intPort,ext_ip)]:
+                    return
+                elif TCPSeqNum == self.inc_seq_num_mapping[(intPort,ext_ip)]:
+                    self.inc_seq_num_mapping[(intPort,ext_ip)] = TCPSeqNum + len(NumDataBytes)
+                    self.http_inc_mapping[(intPort,ext_ip)] += protocolHeader[TCPHeaderLen:]
+            elif TCPSyn == 0 and pkt_dir == PKT_DIR_OUTGOING:
+                if TCPSeqNum > self.out_seq_num_mapping[(intPort,ext_ip)]:
+                    return
+                elif TCPSeqNum == self.out_seq_num_mapping[(intPort,ext_ip)]:
+                    self.out_seq_num_mapping[(intPort,ext_ip)] = TCPSeqNum + len(NumDataBytes)
+                    self.http_out_mapping[(intPort,ext_ip)] += protocolHeader[TCPHeaderLen:]
+            
+            # do below after we get all tcp frags
+            host_header = None
+            if pkt_dir == PKT_DIR_OUTGOING:
+                host_header = self.getHostHeader(request)
+            doLog = self.scanLogRules(dns, ext_ip, host_header)
+            
+            if doLog == "LOG":
+                #must be TCP 
+                TCPoffset = ord(protocolHeader[12]) >> 4
+                HTTPheader = protocolHeader[TCPoffset*4:]
+                self.logHTTP(request, response, ext_ip)
+                
     # TODO: You can add more methods as you want.
     
     def getIPHeaderLength(self, IPheader):
@@ -187,7 +242,7 @@ class Firewall:
         return struct.unpack('!H', TCPheader[0:2])[0]
 
     def setTCPSourcePort(self, TCPheader, port):
-    #port must be integer
+        #port must be integer
         TCPheader[0] = chr(port & 0x00ff)
         TCPheader[1] = chr(port & 0xff00)
         
@@ -195,7 +250,7 @@ class Firewall:
         return struct.unpack('!H', TCPheader[2:4])[0]
 
     def setTCPDestPort(self, TCPheader, port):
-    #port must be integer
+        #port must be integer
         TCPheader[2] = chr(port & 0x00ff)
         TCPheader[3] = chr(port & 0xff00)
 
@@ -213,7 +268,7 @@ class Firewall:
         psuedoHeader.append(dest)
         psuedoHeader.append('\x00')
         psuedoHeader.append(self.getIPProtocolAsBytes(IPheader))
-        psudeoHeader.append(struct.pack('!H', 20))
+        psuedoHeader.append(struct.pack('!H', 20))
         return "".join(psuedoHeader)
 
     def computeTCPChecksum(self, TCPheader, psuedoHeader):
@@ -222,10 +277,7 @@ class Firewall:
             return None
         start = 0
         total = 0
-        while start < len(pseudoHeader):
-            total += struct.unpack('!H', pseudoHeader[start:start+2])[0]
-            start += 2
-        start = 0
+        TCPheader = TCPheader + psuedoHeader
         while start < len(TCPheader)-1:
             total += struct.unpack('!H', TCPheader[start:start+2])[0]
             start += 2
@@ -237,10 +289,11 @@ class Firewall:
             total = carry + result
         return ~total
 
-    def copmuteIPChecksum(self, IPheader):
+    def computeIPChecksum(self, IPheader):
         #returns checksum as integer
         #also assumes checksum field of header is 0
         start = 0
+        total = 0
         while start < len(IPheader)-1:
             total += struct.unpack('!H', IPheader[start:start+2])[0]
             start += 2
@@ -264,7 +317,8 @@ class Firewall:
         header[10:12] = struct.pack('!H', 0)
         header[12:16] = origIPheader[16:20]
         header[16:20] = origIPheader[12:16]
-        header[10:12] = struct.pack('!H', self.copmuteIPChecksum(header))
+        checksum = self.computeIPChecksum("".join(header)) & 0xffff
+        header[10:12] = struct.pack('!H', checksum)
         return "".join(header)
 
     def consturctIPheaderTCPRST(self, origIPheader):
@@ -279,7 +333,8 @@ class Firewall:
         header[10:12] = struct.pack('!H', 0)
         header[12:16] = origIPheader[16:20]
         header[16:20] = origIPheader[12:16]
-        header[10:12] = struct.pack('!H', self.copmuteIPChecksum(header))
+        checksum = self.computeIPChecksum("".join(header)) & 0xffff
+        header[10:12] = struct.pack('!H', checksum)
         return "".join(header)
 
     def constructTCPheader(self, origTCPheader, pseudoHeader):
@@ -291,14 +346,13 @@ class Firewall:
         ackNum = struct.unpack('!L', origTCPheader[4:8])[0]+1
         header[8:12] = struct.pack('!L', ackNum)
         header[12] = chr(0x50)
-        header[13] = chr(20)
+        header[13] = chr(0x14)
         header[14:16] = struct.pack('!H', 0)
         header[16:18] = struct.pack('!H', 0)
         header[18:20] = struct.pack('!H', 0)
-        checksum = self.computeTCPChecksum(header,pseudoHeader)
+        checksum = self.computeTCPChecksum("".join(header), pseudoHeader) & 0xffff
         header[16:18] = struct.pack('!H', checksum)
         return "".join(header)
-
 
     def getUDPSourcePort(self, UDPheader):
         return struct.unpack('!H', UDPheader[0:2])[0]
@@ -356,13 +410,13 @@ class Firewall:
 
     def constructDNS(self, DNSheader):
         header = list(DNSheader[:12])
-        header[2] = chr(ord(DNSheader[2] & 0x80))
+        header[2] = chr(ord(DNSheader[2]) | 0x80)
         header[7] = chr(0x01)
         header[8:10] = struct.pack('!H', 0)
         header[10:12] = struct.pack('!H', 0)
         DNSQuestion = DNSheader[12:]
-        DNSQNameBytes = self.getDNSQNameAsBytes(DNSquestion)
-        questionLength = 4 + len(DNSQName)
+        DNSQNameBytes = self.getDNSQNameAsBytes(DNSQuestion)
+        questionLength = 4 + len(DNSQNameBytes)
         question = list(DNSQuestion[:questionLength])
         answer = list()
         answer.append(DNSQNameBytes) #NAME
@@ -386,7 +440,6 @@ class Firewall:
         #returns integer of QClass
         return struct.unpack('!H', DNSquestion[DNSQNameLength+2:DNSQNameLength+4])[0]
     
-
     def logHTTP(self, request, response, ext_tcp_ip = None):
         """
         sample input:
@@ -408,11 +461,11 @@ class Firewall:
         for field in request:
             if field.split()[0] == "Host:":
                 host_name = field.split()[1]
-                break
+                break;
         for field in response:
             if field.split()[0] == "Content-Length:":
                 object_size = field.split()[1]
-                break
+                break;
 
         self.httplog.write(host_name + " " + method + " " + path + " " + version + " " + status_cdoe + " " + object_size)
         self.httplog.flush()
@@ -425,7 +478,7 @@ class Firewall:
             return_msg = self.handleHostname(dns, ext_ip, host_header, log_rule)
             if return_msg == "not-match":
                 continue
-            else
+            else:
                 return return_msg
 
     # return "PASS", "DROP", "DENY"
@@ -515,12 +568,12 @@ class Firewall:
         match_dns = self.handleDNS(ip_or_dns, log_rule)
         match_ip = ""
         if host_header == None:
-            if ext_ip == log_rule[2]
+            if ext_ip == log_rule[2]:
                 match_ip = log_rule[0]
             else:
                 match_ip = "not-match"
         else:
-            if host_header == log_rule[2];
+            if host_header == log_rule[2]:
                 match_ip = log_rule[0]
             else:
                 match_ip = "not-match"
@@ -546,3 +599,16 @@ class Firewall:
         (one, two, three, four) = ip.split(".")
         ip_integer = int(one) * 2 ** 24 + int(two) * 2 ** 16 + int(three) * 2 ** 8 + int(four)
         return ip_integer
+    
+    # return the host in header if one exists,
+    # None if no thus field or field is empty
+    def getHostHeader(self, request):
+        beginning_index = request.find("Host: ")
+        if beginning_index == -1:
+            return None
+        beginning_index += 5
+        end_index = request.find("\n", beginning_index)
+        temp = request[beginning_index:end_index].split()
+        if temp == []:
+            return
+        return temp[0]
